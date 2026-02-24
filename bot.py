@@ -23,11 +23,24 @@ def init_db():
                  (chat_id TEXT PRIMARY KEY,
                   added_by TEXT,
                   add_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+                  
+    c.execute('''CREATE TABLE IF NOT EXISTS api_keys
+                 (app_id TEXT PRIMARY KEY,
+                  api_key TEXT,
+                  add_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     
     # Ensure ADMIN is always authorized
     if ADMIN_ID:
         c.execute("INSERT OR IGNORE INTO whitelist (chat_id, added_by) VALUES (?, ?)", (str(ADMIN_ID), "System"))
-    
+        
+    # Seed default API key from .env if table is empty
+    c.execute("SELECT COUNT(*) FROM api_keys")
+    if c.fetchone()[0] == 0:
+        env_app_id = os.getenv("X_APP_ID")
+        env_api_key = os.getenv("X_API_KEY")
+        if env_app_id and env_api_key:
+            c.execute("INSERT INTO api_keys (app_id, api_key) VALUES (?, ?)", (env_app_id, env_api_key))
+            
     conn.commit()
     conn.close()
 
@@ -79,24 +92,67 @@ async def check_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ 只有管理员可以使用此命令。")
         return
         
-    # Read whitelist
+    # Read whitelist and API keys
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT chat_id, added_by, add_time FROM whitelist")
-    rows = c.fetchall()
+    whitelist_rows = c.fetchall()
+    
+    c.execute("SELECT app_id, add_time FROM api_keys")
+    key_rows = c.fetchall()
     conn.close()
     
-    auth_list_text = "\n".join([f"ID: `{r[0]}` (由 {r[1]} 添加于 {r[2][:10]})" for r in rows])
+    auth_list_text = "\n".join([f"ID: `{r[0]}` (由 {r[1]} 添加于 {r[2][:10]})" for r in whitelist_rows])
     if not auth_list_text: auth_list_text = "空白"
     
+    keys_list_text = "\n".join([f"AppID: `{r[0]}` (添加于 {r[1][:10]})" for r in key_rows])
+    if not keys_list_text: keys_list_text = "无可用接口！请从.env或命令添加。"
+    
     text = (
-        "🛡️ *机器人授权/群组管理中心*\n\n"
-        f"当前白名单：\n{auth_list_text}\n\n"
-        "如需添加或删除授权白名单，请使用命令:\n"
+        "🛡️ *机器人管理中心*\n\n"
+        f"👥 *当前白名单：*\n{auth_list_text}\n\n"
+        f"🔑 *当前接口池 (轮询调度)：*\n{keys_list_text}\n\n"
+        "---\n"
+        "如需添加/删除白名单，请使用:\n"
         "`/auth add <TelegramID>`\n"
-        "`/auth del <TelegramID>`"
+        "`/auth del <TelegramID>`\n\n"
+        "如需添加/删除API配置，请使用:\n"
+        "`/key add <AppID> <APIKey>`\n"
+        "`/key del <AppID>`"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+async def key_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        return
+        
+    if len(context.args) < 2 and not (len(context.args) == 2 and context.args[0] == "del"):
+        await update.message.reply_text("⚠️ 格式错误。\n添加: `/key add <AppID> <APIKey>`\n删除: `/key del <AppID>`", parse_mode=ParseMode.MARKDOWN)
+        return
+        
+    action = context.args[0]
+    app_id = context.args[1]
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    if action == "add":
+        if len(context.args) < 3:
+            await update.message.reply_text("⚠️ 缺少 API Key。\n添加: `/key add <AppID> <APIKey>`", parse_mode=ParseMode.MARKDOWN)
+            return
+        api_key = context.args[2]
+        c.execute("INSERT OR REPLACE INTO api_keys (app_id, api_key) VALUES (?, ?)", (app_id, api_key))
+        await update.message.reply_text(f"✅ 已将 AppID `{app_id}` 添加入接口轮询池！", parse_mode=ParseMode.MARKDOWN)
+        
+    elif action == "del":
+        c.execute("DELETE FROM api_keys WHERE app_id = ?", (app_id,))
+        if c.rowcount > 0:
+            await update.message.reply_text(f"🗑️ 已将 AppID `{app_id}` 从接口池移除。", parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text(f"⚠️ 接口池中未找到 AppID `{app_id}`。", parse_mode=ParseMode.MARKDOWN)
+            
+    conn.commit()
+    conn.close()
 
 async def auth_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(ADMIN_ID):
@@ -480,6 +536,7 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("check_api", check_api))
     app.add_handler(CommandHandler("admin", check_api)) # alias
     app.add_handler(CommandHandler("auth", auth_cmd))
+    app.add_handler(CommandHandler("key", key_cmd))
     app.add_handler(CommandHandler("s", search_cmd))
     app.add_handler(CommandHandler("sid", sid_cmd))
     app.add_handler(InlineQueryHandler(inline_query_handler))

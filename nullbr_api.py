@@ -1,28 +1,58 @@
 import os
 import httpx
+import json
+import logging
+import sqlite3
+import random
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
 load_dotenv()
 
-APP_ID = os.getenv("NULLBR_APP_ID")
-API_KEY = os.getenv("NULLBR_API_KEY")
-BASE_URL = "https://api.nullbr.eu.org"
+logger = logging.getLogger(__name__)
 
 class NullbrAPI:
-    def __init__(self):
-        self.headers_meta = {
-            "X-APP-ID": APP_ID
-        }
-        self.headers_res = {
-            "X-APP-ID": APP_ID,
-            "X-API-KEY": API_KEY
-        }
-        self.client = httpx.AsyncClient(base_url=BASE_URL, timeout=10.0)
+    def __init__(self, base_url: str = "https://api.nullbr.eu.org"):
+        self.base_url = base_url
+        self.client = httpx.AsyncClient(timeout=30.0)
+        
+    def _get_credentials(self):
+        """Randomly pick an AppID and APIKey from the database for load balancing."""
+        try:
+            conn = sqlite3.connect("auth.db")
+            c = conn.cursor()
+            c.execute("CREATE TABLE IF NOT EXISTS api_keys (app_id TEXT, api_key TEXT)")
+            c.execute("SELECT app_id, api_key FROM api_keys")
+            keys = c.fetchall()
+            conn.close()
+            
+            if keys:
+                return random.choice(keys)
+        except Exception as e:
+            logger.error(f"Error reading API keys from DB: {e}")
+            
+        # Fallback to pure .env if db missing or empty
+        app_id = os.getenv("NULLBR_APP_ID")
+        api_key = os.getenv("NULLBR_API_KEY")
+        if not app_id or not api_key:
+            raise ValueError("No API credentials found in database or .env file.")
+        
+        return app_id, api_key
 
     async def _request(self, endpoint, is_res=False, params=None):
-        headers = self.headers_res if is_res else self.headers_meta
+        app_id, api_key = self._get_credentials()
+        
+        headers_meta = {
+            "X-APP-ID": app_id
+        }
+        headers_res = {
+            "X-APP-ID": app_id,
+            "X-API-KEY": api_key
+        }
+        
+        headers = headers_res if is_res else headers_meta
         try:
-            response = await self.client.get(endpoint, headers=headers, params=params)
+            response = await self.client.get(f"{self.base_url}{endpoint}", headers=headers, params=params)
             response.raise_for_status()
             return response.json()
         except httpx.RequestError as e:
