@@ -62,6 +62,55 @@ python bot.py
 - 看到左下角弹出的 Menu 图标，代表自动挂载完毕。
 - 点击菜单或者发送 `/s 蜘蛛侠` 畅享体验吧！
 
+### 5. 使用脚本托管（推荐 1Panel 计划任务）
+
+项目已提供进程管理脚本：`scripts/bot_manager.sh`
+
+```bash
+# 首次赋予执行权限
+chmod +x scripts/bot_manager.sh
+
+# 启动
+bash scripts/bot_manager.sh start
+
+# 停止
+bash scripts/bot_manager.sh stop
+
+# 重启
+bash scripts/bot_manager.sh restart
+
+# 状态
+bash scripts/bot_manager.sh status
+```
+
+如果你在 1Panel 的计划任务里做“每日定时重启”，可直接设置任务命令：
+
+```bash
+cd /你的项目目录 && bash scripts/bot_manager.sh restart
+```
+
+如果你希望任务自动完成“拉取最新代码 + 更新依赖 + 重启”，可使用：
+
+```bash
+cd /你的项目目录 && bash scripts/update_and_restart.sh
+```
+
+首次使用请赋予执行权限：
+
+```bash
+chmod +x scripts/update_and_restart.sh
+```
+
+如果你用了虚拟环境且不在默认 `.venv`，可以在任务中覆盖变量：
+
+```bash
+cd /你的项目目录 && VENV_PATH=/opt/nullbr-venv bash scripts/bot_manager.sh restart
+```
+
+默认日志与 PID 文件：
+- 日志：`bot_runtime.log`
+- PID：`bot.pid`
+
 ---
 
 ## 📖 管理员操作指令 / 使用手册
